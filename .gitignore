@@ -1,0 +1,12 @@
+# Root ignore file
+node_modules/
+venv/
+.env
+*.log
+.vscode/
+.idea/
+
+# Ignore child .env files
+**/ .env
+**/ .env.local
+**/ .env.*.local
