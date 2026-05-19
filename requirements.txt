@@ -26,7 +26,7 @@ colorama==0.4.6
 coloredlogs==15.0.1
 cronsim==2.7
 cryptography==46.0.5
-cyclot==4.10.2
+# cyclot==4.10.2
 dashscope==1.25.14
 dataclasses-json==0.6.7
 diskcache==5.6.3
@@ -52,7 +52,7 @@ googleapis-common-protos==1.73.0
 greenlet==3.3.2
 grpcio==1.78.0
 h11==0.16.0
-hello-agents==0.2.9
+# hello-agents==0.2.9
 hf-xet==1.4.2
 httpcore==1.0.9
 httptools==0.7.1
@@ -108,7 +108,7 @@ numpy==2.2.6
 oauthlib==3.3.1
 ollama==0.6.1
 onnxruntime==1.23.2
-openai==2.32.0
+openai
 openapi-pydantic==0.5.1
 opentelemetry-api==1.40.0
 opentelemetry-exporter-otlp-proto-common==1.40.0
@@ -140,7 +140,7 @@ pydantic==2.12.5
 pydantic-settings==2.13.1
 pydantic_core==2.41.5
 pydeck==0.9.1
-pydock==0.18.2
+# pydock==0.18.2
 Pygments==2.19.2
 PyJWT==2.12.1
 pypdf==6.9.0
