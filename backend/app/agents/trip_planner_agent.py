@@ -204,9 +204,14 @@ PLANNER_SYSTEM_PROMPT = """## 角色定义
 
 
 # ============================================
-# 日志配置
+# 日志配置（使用 print 确保输出，uvicorn 会重置 logging）
 # ============================================
 logger = logging.getLogger(__name__)
+
+def _log(msg: str, level: str = "INFO"):
+    """打印日志（同时使用 logging 和 print，确保输出）"""
+    print(f"[{level}] {msg}", flush=True)
+    getattr(logger, level.lower(), logger.info)(msg)
 
 
 # ============================================
@@ -252,7 +257,7 @@ class MultiAgentTripPlanner:
     
     def __init__(self):
         """初始化旅行规划 Agent"""
-        logger.info("[INIT] 初始化 LangGraph 旅行规划系统...")
+        _log("[INIT] 初始化 LangGraph 旅行规划系统...")
 
         self.name = "langgraph-trip-planner"
         self.llm = get_llm()
@@ -260,12 +265,12 @@ class MultiAgentTripPlanner:
 
         # 初始化 MemorySaver 用于状态持久化
         self.checkpointer = MemorySaver()
-        logger.info("[INIT] MemorySaver 状态持久化已启用")
+        _log("[INIT] MemorySaver 状态持久化已启用")
 
         # 构建 LangGraph 工作流
         self.graph = self._build_graph()
 
-        logger.info("[SUCCESS] LangGraph 旅行规划系统初始化完成")
+        _log("[SUCCESS] LangGraph 旅行规划系统初始化完成")
     
     def _build_graph(self):
         """构建 LangGraph 工作流图
@@ -337,11 +342,11 @@ class MultiAgentTripPlanner:
 
         # 未超过重试次数，重试
         if retry_count < 2:
-            logger.warning("[ROUTER] Planner 输出无效，第 %d 次重试", retry_count + 1)
+            _log("[ROUTER] Planner 输出无效，第 %d 次重试" % (retry_count + 1), "WARNING")
             return "retry"
 
         # 超过重试次数，使用备用计划
-        logger.warning("[ROUTER] 已达最大重试次数，使用备用计划")
+        _log("[ROUTER] 已达最大重试次数，使用备用计划", "WARNING")
         return "fallback"
 
     def start_plan_trip(self, request: TripRequest) -> Dict[str, Any]:
@@ -357,14 +362,14 @@ class MultiAgentTripPlanner:
             包含 thread_id 和候选数据的字典
         """
         start_time = time.time()
-        logger.info("[START] 开始旅行规划（Human-in-the-loop 模式）...")
-        logger.info("   目的地: %s", request.city)
-        logger.info("   日期: %s 至 %s", request.start_date, request.end_date)
+        _log("[START] 开始旅行规划（Human-in-the-loop 模式）...")
+        _log("   目的地: %s" % request.city)
+        _log("   日期: %s 至 %s" % (request.start_date, request.end_date))
 
         # 使用 thread_id 作为 checkpoint 的键
         thread_id = request.thread_id or str(uuid4())
         config = {"configurable": {"thread_id": thread_id}}
-        logger.info("[CHECKPOINT] Thread ID: %s", thread_id)
+        _log("[CHECKPOINT] Thread ID: %s" % thread_id)
 
         # 执行工作流，在 review_candidates 节点前中断
         # interrupt_before 会自动在该节点前暂停
@@ -376,10 +381,10 @@ class MultiAgentTripPlanner:
         hotels = final_state.get("hotel_candidates", [])
 
         elapsed = time.time() - start_time
-        logger.info("[PAUSED] 工作流已暂停，等待用户审核候选数据")
-        logger.info("   景点候选: %d 个", len(attractions))
-        logger.info("   天气预报: %d 天", len(weather_list))
-        logger.info("   酒店候选: %d 个", len(hotels))
+        _log("[PAUSED] 工作流已暂停，等待用户审核候选数据")
+        _log("   景点候选: %d 个" % len(attractions))
+        _log("   天气预报: %d 天" % len(weather_list))
+        _log("   酒店候选: %d 个" % len(hotels))
 
         return {
             "thread_id": thread_id,
@@ -401,7 +406,7 @@ class MultiAgentTripPlanner:
             TripPlan 对象，包含生成的完整旅行计划
         """
         start_time = time.time()
-        logger.info("[RESUME] 恢复旅行规划，Thread ID: %s", thread_id)
+        _log("[RESUME] 恢复旅行规划，Thread ID: %s" % thread_id)
 
         config = {"configurable": {"thread_id": thread_id}}
 
@@ -420,18 +425,18 @@ class MultiAgentTripPlanner:
                 if request:
                     return self._create_fallback_plan(request)
                 else:
-                    logger.error("[ERROR] 无法从 checkpoint 恢复 request")
+                    _log("[ERROR] 无法从 checkpoint 恢复 request", "ERROR")
                     return None
 
             elapsed = time.time() - start_time
-            logger.info("[SUCCESS] 旅行规划完成，总耗时: %.2f秒", elapsed)
+            _log("[SUCCESS] 旅行规划完成，总耗时: %.2f秒" % elapsed)
             return trip_plan
 
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.error("[ERROR] LangGraph 恢复失败，耗时: %.2f秒, 错误: %s", elapsed, str(e))
+            _log("[ERROR] LangGraph 恢复失败，耗时: %.2f秒, 错误: %s" % (elapsed, str(e)), "ERROR")
             import traceback
-            logger.debug(traceback.format_exc())
+            _log(traceback.format_exc(), "DEBUG")
             return None
 
     def plan_trip(self, request: TripRequest) -> TripPlan:
@@ -448,16 +453,16 @@ class MultiAgentTripPlanner:
             TripPlan 对象，包含生成的完整旅行计划
         """
         start_time = time.time()
-        logger.info("[START] 开始 LangGraph 旅行规划...")
-        logger.info("   目的地: %s", request.city)
-        logger.info("   日期: %s 至 %s", request.start_date, request.end_date)
-        logger.info("   天数: %d天", request.travel_days)
+        _log("[START] 开始 LangGraph 旅行规划...")
+        _log("   目的地: %s" % request.city)
+        _log("   日期: %s 至 %s" % (request.start_date, request.end_date))
+        _log("   天数: %d天" % request.travel_days)
 
         try:
             # 使用 thread_id 作为 checkpoint 的键，支持状态持久化
             thread_id = request.thread_id or str(uuid4())
             config = {"configurable": {"thread_id": thread_id}}
-            logger.info("[CHECKPOINT] Thread ID: %s", thread_id)
+            _log("[CHECKPOINT] Thread ID: %s" % thread_id)
 
             # 调用 graph.invoke() 执行工作流
             # 注意：由于 interrupt_before=["review_candidates"]，会在此节点前暂停
@@ -471,16 +476,71 @@ class MultiAgentTripPlanner:
                 return self._create_fallback_plan(request)
 
             elapsed = time.time() - start_time
-            logger.info("[SUCCESS] 旅行规划完成，总耗时: %.2f秒", elapsed)
+            _log("[SUCCESS] 旅行规划完成，总耗时: %.2f秒" % elapsed)
             return trip_plan
 
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.error("[ERROR] LangGraph 规划失败，耗时: %.2f秒, 错误: %s", elapsed, str(e))
+            _log("[ERROR] LangGraph 规划失败，耗时: %.2f秒, 错误: %s" % (elapsed, str(e)), "ERROR")
             import traceback
-            logger.debug(traceback.format_exc())
+            _log(traceback.format_exc(), "DEBUG")
             return self._create_fallback_plan(request)
-    
+
+    def stream_plan_trip(self, request: TripRequest):
+        """流式执行旅行规划
+
+        使用 graph.stream() 实现节点级进度推送，
+        每个节点完成时 yield 事件数据。
+
+        Args:
+            request: TripRequest 对象，包含用户的旅行需求
+
+        Yields:
+            包含事件类型的字典
+        """
+        start_time = time.time()
+        _log("[STREAM] 开始流式旅行规划...")
+        _log("   目的地: %s" % request.city)
+
+        thread_id = request.thread_id or str(uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+
+        yield {"type": "start", "thread_id": thread_id}
+
+        try:
+            # 使用 graph.stream() 流式执行
+            for event in self.graph.stream({"request": request}, config=config):
+                for node_name, node_output in event.items():
+                    elapsed = time.time() - start_time
+                    _log("[STREAM] 节点完成: %s, 耗时: %.2f秒" % (node_name, elapsed))
+
+                    # yield 节点完成事件
+                    yield {
+                        "type": "node_complete",
+                        "node": node_name,
+                        "elapsed": round(elapsed, 2),
+                    }
+
+            # 获取最终状态
+            final_state = self.graph.get_state(config)
+            trip_plan = final_state.get("trip_plan") if final_state else None
+
+            if trip_plan:
+                elapsed = time.time() - start_time
+                _log("[STREAM] 旅行规划完成，总耗时: %.2f秒" % elapsed)
+                yield {
+                    "type": "complete",
+                    "trip_plan": trip_plan.model_dump(),
+                    "elapsed": round(elapsed, 2),
+                }
+            else:
+                yield {"type": "error", "message": "生成旅行计划失败"}
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            _log("[STREAM] 流式规划失败: %s" % str(e), "ERROR")
+            yield {"type": "error", "message": str(e), "elapsed": round(elapsed, 2)}
+
     # ============================================
     # 节点实现
     # ============================================
@@ -503,7 +563,7 @@ class MultiAgentTripPlanner:
         # 根据用户偏好确定搜索关键词
         keywords = request.preferences[0] if request.preferences else "景点"
 
-        logger.info("[SEARCH] 搜索景点: 关键词=%s, 城市=%s", keywords, request.city)
+        _log("[SEARCH] 搜索景点: 关键词=%s, 城市=%s" % (keywords, request.city))
 
         # 调用高德地图搜索 POI（带自动重试）
         pois = self._safe_search_poi(
@@ -535,7 +595,7 @@ class MultiAgentTripPlanner:
             })
 
         elapsed = time.time() - start_time
-        logger.info("[SUCCESS] 景点搜索完成，候选数量: %d, 耗时: %.2f秒", len(candidates), elapsed)
+        _log("[SUCCESS] 景点搜索完成，候选数量: %d, 耗时: %.2f秒" % (len(candidates), elapsed))
 
         # 返回更新的状态数据
         return {"attraction_candidates": candidates}
@@ -555,7 +615,7 @@ class MultiAgentTripPlanner:
         start_time = time.time()
         request = state["request"]
 
-        logger.info("[WEATHER] 获取天气预报: 城市=%s", request.city)
+        _log("[WEATHER] 获取天气预报: 城市=%s" % request.city)
 
         # 调用高德地图获取天气（带自动重试）
         weather_list = self._safe_get_weather(request.city)
@@ -574,7 +634,7 @@ class MultiAgentTripPlanner:
             })
 
         elapsed = time.time() - start_time
-        logger.info("[SUCCESS] 天气预报获取完成，预报天数: %d, 耗时: %.2f秒", len(candidates), elapsed)
+        _log("[SUCCESS] 天气预报获取完成，预报天数: %d, 耗时: %.2f秒" % (len(candidates), elapsed))
 
         return {"weather_candidates": candidates}
     
@@ -606,9 +666,9 @@ class MultiAgentTripPlanner:
                 longitude=loc_data.get("longitude", 0),
                 latitude=loc_data.get("latitude", 0)
             )
-            logger.info("[HOTEL] 正在搜索景点【%s】周边的酒店...", first_attraction['name'])
+            _log("[HOTEL] 正在搜索景点【%s】周边的酒店..." % first_attraction['name'])
         else:
-            logger.info("[HOTEL] 未找到景点，将在 %s 全城搜索酒店...", request.city)
+            _log("[HOTEL] 未找到景点，将在 %s 全城搜索酒店..." % request.city)
 
         # 调用高德地图搜索酒店 (传入中心点坐标，带自动重试)
         pois = self._safe_search_poi(
@@ -641,7 +701,7 @@ class MultiAgentTripPlanner:
             })
 
         elapsed = time.time() - start_time
-        logger.info("[SUCCESS] 酒店搜索完成，候选数量: %d, 耗时: %.2f秒", len(candidates), elapsed)
+        _log("[SUCCESS] 酒店搜索完成，候选数量: %d, 耗时: %.2f秒" % (len(candidates), elapsed))
 
         return {"hotel_candidates": candidates}
 
@@ -658,10 +718,10 @@ class MultiAgentTripPlanner:
         weather_list = state.get("weather_candidates", [])
         hotels = state.get("hotel_candidates", [])
 
-        logger.info("[REVIEW] 候选审核节点 - 准备返回候选数据给用户")
-        logger.info("   景点候选: %d 个", len(attractions))
-        logger.info("   天气预报: %d 天", len(weather_list))
-        logger.info("   酒店候选: %d 个", len(hotels))
+        _log("[REVIEW] 候选审核节点 - 准备返回候选数据给用户")
+        _log("   景点候选: %d 个" % len(attractions))
+        _log("   天气预报: %d 天" % len(weather_list))
+        _log("   酒店候选: %d 个" % len(hotels))
 
         # 此节点返回空字典，因为状态已经在之前的节点中更新
         # 它的作用是作为 interrupt_before 的断点
@@ -690,10 +750,10 @@ class MultiAgentTripPlanner:
         retry_count = state.get("planner_retry_count", 0)
         error_messages = state.get("planner_error_messages", [])
 
-        logger.info("[PLAN] 开始生成旅行计划... (第 %d 次尝试)", retry_count + 1)
-        logger.info("   景点候选: %d 个", len(attractions))
-        logger.info("   天气预报: %d 天", len(weather_list))
-        logger.info("   酒店候选: %d 个", len(hotels))
+        _log("[PLAN] 开始生成旅行计划... (第 %d 次尝试)" % (retry_count + 1))
+        _log("   景点候选: %d 个" % len(attractions))
+        _log("   天气预报: %d 天" % len(weather_list))
+        _log("   酒店候选: %d 个" % len(hotels))
 
         # 构建消息列表（SystemMessage + HumanMessage）
         messages = self._build_planning_messages(
@@ -712,13 +772,13 @@ class MultiAgentTripPlanner:
                 # 转换为 TripPlan 对象
                 trip_plan = self._build_trip_plan(plan_data, request)
                 elapsed = time.time() - start_time
-                logger.info("[SUCCESS] 旅行计划生成成功! 耗时: %.2f秒", elapsed)
+                _log("[SUCCESS] 旅行计划生成成功! 耗时: %.2f秒" % elapsed)
                 # 成功时重置重试计数
                 return {"trip_plan": trip_plan, "planner_retry_count": 0}
             else:
                 # JSON 解析失败，返回错误信息供重试使用
                 error_msg = "LLM 返回格式错误，无法解析为 JSON"
-                logger.warning("[WARNING] %s", error_msg)
+                _log("[WARNING] %s" % error_msg, "WARNING")
                 return {
                     "planner_retry_count": retry_count + 1,
                     "planner_error_messages": [error_msg]
@@ -726,7 +786,7 @@ class MultiAgentTripPlanner:
 
         except Exception as e:
             error_msg = f"解析旅行计划失败: {str(e)}"
-            logger.error("[ERROR] %s", error_msg)
+            _log("[ERROR] %s" % error_msg, "ERROR")
             return {
                 "planner_retry_count": retry_count + 1,
                 "planner_error_messages": [error_msg]
@@ -970,7 +1030,7 @@ class MultiAgentTripPlanner:
 
         当 LLM 生成失败时，使用硬编码的示例计划作为后备
         """
-        logger.warning("[WARNING] 使用备用计划模板")
+        _log("[WARNING] 使用备用计划模板", "WARNING")
         
         # 生成日期列表
         start = datetime.strptime(request.start_date, "%Y-%m-%d")
