@@ -19,10 +19,7 @@ os.chdir(current_dir)
 
 if __name__ == "__main__":
     import uvicorn
-    from app.logging_config import setup_logging
-
-    # 初始化日志配置
-    setup_logging()
+    from app.logging_config import LOGGING_CONFIG
 
     # 处理 Windows 控制台编码问题
     if sys.platform == "win32":
@@ -52,5 +49,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8001,
         reload=True,
-        log_level="info",
+        log_level="debug",
+        log_config=LOGGING_CONFIG,  # 传递日志配置给uvicorn
     )

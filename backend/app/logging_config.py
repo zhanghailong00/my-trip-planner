@@ -28,7 +28,7 @@ LOGGING_CONFIG = {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "standard",
-            "level": "INFO",
+            "level": "DEBUG",
         },
     },
     "root": {
@@ -37,6 +37,11 @@ LOGGING_CONFIG = {
     },
     "loggers": {
         "app": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": False  # 不向上传播，避免重复输出
+        },
+        "uvicorn": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False
