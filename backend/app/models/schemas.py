@@ -61,9 +61,14 @@ class POIInfo(BaseModel):
 
 class TripRequest(BaseModel):
     """旅行规划请求
-    
+
     用户提交的旅行需求，包含目的地、时间、交通住宿偏好等
     """
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="会话ID，用于checkpoint状态持久化",
+        example="abc123-def456"
+    )
     city: str = Field(..., description="目的地城市", example="北京")
     start_date: str = Field(..., description="开始日期 YYYY-MM-DD格式", example="2025-06-01")
     end_date: str = Field(..., description="结束日期 YYYY-MM-DD格式", example="2025-06-03")

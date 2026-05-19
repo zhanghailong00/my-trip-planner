@@ -51,7 +51,9 @@ from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from uuid import uuid4
 
 from ..models.schemas import (
     Attraction,
@@ -255,6 +257,10 @@ class MultiAgentTripPlanner:
         self.llm = get_llm()
         self.amap_service = get_amap_service()
 
+        # 初始化 MemorySaver 用于状态持久化
+        self.checkpointer = MemorySaver()
+        logger.info("[INIT] MemorySaver 状态持久化已启用")
+
         # 构建 LangGraph 工作流
         self.graph = self._build_graph()
 
@@ -296,7 +302,8 @@ class MultiAgentTripPlanner:
         workflow.add_edge("planner", END)
         
         # 编译图，生成可执行的图对象
-        return workflow.compile()
+        # 传入 checkpointer 支持状态持久化
+        return workflow.compile(checkpointer=self.checkpointer)
     
     def plan_trip(self, request: TripRequest) -> TripPlan:
         """执行旅行规划
@@ -316,9 +323,13 @@ class MultiAgentTripPlanner:
         logger.info("   天数: %d天", request.travel_days)
 
         try:
+            # 使用 thread_id 作为 checkpoint 的键，支持状态持久化
+            thread_id = request.thread_id or str(uuid4())
+            config = {"configurable": {"thread_id": thread_id}}
+            logger.info("[CHECKPOINT] Thread ID: %s", thread_id)
+
             # 调用 graph.invoke() 执行工作流
-            # 输入是初始状态，这里只传入 request
-            final_state = self.graph.invoke({"request": request})
+            final_state = self.graph.invoke({"request": request}, config=config)
 
             # 从最终状态中获取生成的旅行计划
             trip_plan = final_state.get("trip_plan")
