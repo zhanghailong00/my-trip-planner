@@ -6,23 +6,29 @@
 - POST /api/trip/resume/{thread_id}: 从审核点恢复
 """
 
+import logging
+import logging.config
 from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ...agents.trip_planner_agent import MultiAgentTripPlanner
+from ...logging_config import LOGGING_CONFIG
 from ...models.schemas import TripPlan, TripRequest
 
 router = APIRouter(prefix="/trip", tags=["旅行规划"])
 
 # 全局 Agent 实例 (延迟加载)
-_trip_planner: MultiAgentTripPlanner | None = None
+_trip_planner = None
 
 
-def get_trip_planner() -> MultiAgentTripPlanner:
+def get_trip_planner():
     """获取旅行规划 Agent 实例 (延迟加载)"""
     global _trip_planner
     if _trip_planner is None:
+        # 在首次请求时重新配置日志（uvicorn reload 模式下会重置）
+        logging.config.dictConfig(LOGGING_CONFIG)
+        # 延迟导入，确保日志配置在导入前生效
+        from ...agents.trip_planner_agent import MultiAgentTripPlanner
         _trip_planner = MultiAgentTripPlanner()
     return _trip_planner
 

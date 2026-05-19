@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import get_settings, print_config, validate_config
-from ..logging_config import setup_logging
+from ..logging_config import LOGGING_CONFIG
 from .routes import trip
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用"""
+    # 在子进程中重新应用日志配置（reload 模式下 log_config 可能丢失）
+    logging.config.dictConfig(LOGGING_CONFIG)
+
     settings = get_settings()
 
     app = FastAPI(

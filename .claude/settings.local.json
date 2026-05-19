@@ -6,7 +6,21 @@
       "Bash(python -c \"from app.agents.trip_planner_agent import MultiAgentTripPlanner; print\\('Backend import OK'\\)\")",
       "Bash(npm run *)",
       "Bash(python -c \"from app.logging_config import LOGGING_CONFIG; print\\('Config OK'\\)\")",
-      "Bash(python -c \"from app.agents.trip_planner_agent import TripPlannerState; print\\('State import OK'\\)\")"
+      "Bash(python -c \"from app.agents.trip_planner_agent import TripPlannerState; print\\('State import OK'\\)\")",
+      "Bash(python run.py)",
+      "Bash(curl -s http://localhost:8001/health)",
+      "Bash(pkill -f \"uvicorn\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python -c \"from app.agents.trip_planner_agent import MultiAgentTripPlanner; print\\('Import OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -X POST http://localhost:8001/api/trip/plan -H 'Content-Type: application/json' -d @/tmp/test_request.json)",
+      "Bash(taskkill //F //PID 10612 //PID 12508 //PID 20692 //PID 9000 //PID 10808)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //F //PID 9976 //PID 11236 //PID 18000 //PID 1232 //PID 20692)",
+      "Bash(taskkill //F //PID 9000 //PID 20692 //PID 10808)",
+      "Bash(taskkill //F //IM python.exe)"
     ]
   }
 }
