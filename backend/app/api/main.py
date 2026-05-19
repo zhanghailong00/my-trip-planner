@@ -16,9 +16,6 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用"""
-    # 初始化日志配置
-    setup_logging()
-
     settings = get_settings()
 
     app = FastAPI(
