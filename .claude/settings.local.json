@@ -5,7 +5,8 @@
       "Bash(pip install *)",
       "Bash(python -c \"from app.agents.trip_planner_agent import MultiAgentTripPlanner; print\\('Backend import OK'\\)\")",
       "Bash(npm run *)",
-      "Bash(python -c \"from app.logging_config import LOGGING_CONFIG; print\\('Config OK'\\)\")"
+      "Bash(python -c \"from app.logging_config import LOGGING_CONFIG; print\\('Config OK'\\)\")",
+      "Bash(python -c \"from app.agents.trip_planner_agent import TripPlannerState; print\\('State import OK'\\)\")"
     ]
   }
 }

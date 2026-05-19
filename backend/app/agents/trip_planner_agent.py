@@ -45,9 +45,10 @@ LangGraph 是 LangChain 推出的一个用于构建有状态、多步骤 AI Agen
 
 import json
 import logging
+import operator
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
@@ -211,18 +212,23 @@ logger = logging.getLogger(__name__)
 
 class TripPlannerState(TypedDict, total=False):
     """旅行规划 Agent 的状态
-    
+
     这是一个 TypedDict，定义了在图执行过程中传递的状态数据。
     total=False 表示所有字段都是可选的。
-    
+
     State 在整个图执行过程中在节点间传递，
     每个节点可以读取 state，也可以返回要更新的字段。
+
+    使用 Annotated + operator.add 实现列表字段的追加语义，
+    避免并行执行时数据覆盖问题。
     """
-    request: TripRequest                    # 用户请求
-    attraction_candidates: List[Dict]       # 景点候选列表
-    weather_candidates: List[Dict]          # 天气候选列表
-    hotel_candidates: List[Dict]            # 酒店候选列表
-    trip_plan: Optional[TripPlan]           # 最终生成的旅行计划
+    request: TripRequest                                    # 用户请求
+    attraction_candidates: Annotated[List[Dict], operator.add]  # 景点候选列表（追加）
+    weather_candidates: Annotated[List[Dict], operator.add]     # 天气候选列表（追加）
+    hotel_candidates: Annotated[List[Dict], operator.add]       # 酒店候选列表（追加）
+    trip_plan: Optional[TripPlan]                           # 最终生成的旅行计划
+    planner_error_messages: Annotated[List[str], operator.add]  # 重试错误信息（追加）
+    planner_retry_count: int                                # 重试计数
 
 
 # ============================================
