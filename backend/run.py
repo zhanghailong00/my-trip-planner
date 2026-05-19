@@ -10,6 +10,10 @@
 import sys
 import os
 
+# 强制禁用 Python 输出缓冲，确保日志立即显示在终端
+# 这必须在任何其他 import 之前设置
+os.environ["PYTHONUNBUFFERED"] = "1"
+
 # 获取当前脚本所在目录 (backend/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 将 backend 目录添加到 Python 路径
@@ -19,7 +23,6 @@ os.chdir(current_dir)
 
 if __name__ == "__main__":
     import uvicorn
-    from app.logging_config import LOGGING_CONFIG
 
     # 处理 Windows 控制台编码问题
     if sys.platform == "win32":
@@ -48,7 +51,6 @@ if __name__ == "__main__":
         "app.api.main:app",
         host="0.0.0.0",
         port=8001,
-        reload=True,
+        reload=False,
         log_level="debug",
-        log_config=LOGGING_CONFIG,
     )

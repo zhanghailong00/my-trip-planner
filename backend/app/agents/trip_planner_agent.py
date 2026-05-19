@@ -46,6 +46,7 @@ LangGraph 是 LangChain 推出的一个用于构建有状态、多步骤 AI Agen
 import json
 import logging
 import operator
+import sys
 import time
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
@@ -210,6 +211,12 @@ logger = logging.getLogger(__name__)
 
 def _log(msg: str, level: str = "INFO"):
     """打印日志（同时使用 logging 和 print，确保输出）"""
+    # 强制行缓冲模式，确保 uvicorn reload 子进程也能立即输出
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(line_buffering=True)
+        except Exception:
+            pass
     print(f"[{level}] {msg}", flush=True)
     getattr(logger, level.lower(), logger.info)(msg)
 
