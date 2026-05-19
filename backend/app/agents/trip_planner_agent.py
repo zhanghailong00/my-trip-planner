@@ -268,43 +268,86 @@ class MultiAgentTripPlanner:
     
     def _build_graph(self):
         """构建 LangGraph 工作流图
-        
+
         定义节点和边，构建完整的工作流程:
-        
+
         attraction ──┐
-                    ├──→ planner → END
-        weather   ──┤
-                    │
-        hotel     ──┘
+                    ├──→ weather ──┐
+                    │              ├──→ planner ──[conditional]──→ END (valid)
+                    └──→ hotel  ──┘                   │
+                                                      └──→ planner (retry < 2)
+                                                      └──→ END (fallback)
+
+        当 attraction 返回空结果时，自动执行备用搜索（在节点内部处理）。
         """
         # 创建状态图，指定状态类型
         workflow = StateGraph(TripPlannerState)
-        
+
         # 注册节点
         workflow.add_node("attraction", self._attraction_node)
         workflow.add_node("weather", self._weather_node)
         workflow.add_node("hotel", self._hotel_node)
         workflow.add_node("planner", self._planner_node)
-        
+
         # 设置入口点 (第一个执行的节点)
         workflow.set_entry_point("attraction")
-        
-        # 定义边 (节点之间的连接关系)
-        # attraction 完成后，并行执行 weather 和 hotel
+
+        # 并行执行 weather 和 hotel
         workflow.add_edge("attraction", "weather")
         workflow.add_edge("attraction", "hotel")
-        
+
         # weather 和 hotel 都完成后，才执行 planner
         workflow.add_edge("weather", "planner")
         workflow.add_edge("hotel", "planner")
-        
-        # planner 完成后，流程结束
-        workflow.add_edge("planner", END)
-        
+
+        # --- Conditional Edge: planner 后的验证路由 ---
+        # 验证 LLM 输出，无效时重试（最多2次）
+        workflow.add_conditional_edges(
+            "planner",
+            self._route_after_planner,
+            {
+                "valid": END,           # 输出有效，结束
+                "retry": "planner",     # 输出无效，重试
+                "fallback": END,        # 超过重试次数，使用备用计划
+            }
+        )
+
         # 编译图，生成可执行的图对象
         # 传入 checkpointer 支持状态持久化
         return workflow.compile(checkpointer=self.checkpointer)
-    
+
+    def _route_after_attraction(self, state: TripPlannerState) -> str:
+        """attraction 节点后的条件路由函数
+
+        根据景点搜索结果决定走正常流程还是备用搜索。
+        """
+        attractions = state.get("attraction_candidates", [])
+        if not attractions:
+            logger.warning("[ROUTER] 景点搜索结果为空，走备用搜索路径")
+            return "fallback"
+        return "ok"
+
+    def _route_after_planner(self, state: TripPlannerState) -> str:
+        """planner 节点后的条件路由函数
+
+        验证 LLM 输出的有效性，无效时重试。
+        """
+        trip_plan = state.get("trip_plan")
+        retry_count = state.get("planner_retry_count", 0)
+
+        # 验证输出：必须有 trip_plan 且 days_plan 不为空
+        if trip_plan and trip_plan.days_plan:
+            return "valid"
+
+        # 未超过重试次数，重试
+        if retry_count < 2:
+            logger.warning("[ROUTER] Planner 输出无效，第 %d 次重试", retry_count + 1)
+            return "retry"
+
+        # 超过重试次数，使用备用计划
+        logger.warning("[ROUTER] 已达最大重试次数，使用备用计划")
+        return "fallback"
+
     def plan_trip(self, request: TripRequest) -> TripPlan:
         """执行旅行规划
 
@@ -519,28 +562,31 @@ class MultiAgentTripPlanner:
         整合所有候选数据 (景点、天气、酒店)，
         使用 LLM 生成最终的旅行计划。
 
-        这是整个工作流的汇聚点，weather 和 hotel 完成后都会汇聚到这里。
+        支持重试机制：输出无效时返回错误信息，
+        由 _route_after_planner 条件边决定是否重试。
 
         Args:
             state: 当前状态，包含所有候选数据
 
         Returns:
-            生成的 TripPlan
+            生成的 TripPlan 或错误信息
         """
         start_time = time.time()
         request = state["request"]
         attractions = state.get("attraction_candidates", [])
         weather_list = state.get("weather_candidates", [])
         hotels = state.get("hotel_candidates", [])
+        retry_count = state.get("planner_retry_count", 0)
+        error_messages = state.get("planner_error_messages", [])
 
-        logger.info("[PLAN] 开始生成旅行计划...")
+        logger.info("[PLAN] 开始生成旅行计划... (第 %d 次尝试)", retry_count + 1)
         logger.info("   景点候选: %d 个", len(attractions))
         logger.info("   天气预报: %d 天", len(weather_list))
         logger.info("   酒店候选: %d 个", len(hotels))
 
         # 构建给 LLM 的提示词
         prompt = self._build_planning_prompt(
-            request, attractions, weather_list, hotels
+            request, attractions, weather_list, hotels, error_messages
         )
 
         # 调用 LLM 生成计划
@@ -556,14 +602,24 @@ class MultiAgentTripPlanner:
                 trip_plan = self._build_trip_plan(plan_data, request)
                 elapsed = time.time() - start_time
                 logger.info("[SUCCESS] 旅行计划生成成功! 耗时: %.2f秒", elapsed)
-                return {"trip_plan": trip_plan}
+                # 成功时重置重试计数
+                return {"trip_plan": trip_plan, "planner_retry_count": 0}
             else:
-                logger.warning("[WARNING] LLM 返回格式错误，使用备用计划")
-                return {"trip_plan": self._create_fallback_plan(request)}
+                # JSON 解析失败，返回错误信息供重试使用
+                error_msg = "LLM 返回格式错误，无法解析为 JSON"
+                logger.warning("[WARNING] %s", error_msg)
+                return {
+                    "planner_retry_count": retry_count + 1,
+                    "planner_error_messages": [error_msg]
+                }
 
         except Exception as e:
-            logger.error("[ERROR] 解析旅行计划失败: %s", str(e))
-            return {"trip_plan": self._create_fallback_plan(request)}
+            error_msg = f"解析旅行计划失败: {str(e)}"
+            logger.error("[ERROR] %s", error_msg)
+            return {
+                "planner_retry_count": retry_count + 1,
+                "planner_error_messages": [error_msg]
+            }
     
     # ============================================
     # 辅助方法
@@ -574,12 +630,14 @@ class MultiAgentTripPlanner:
         request: TripRequest,
         attractions: List[Dict],
         weather_list: List[Dict],
-        hotels: List[Dict]
+        hotels: List[Dict],
+        error_messages: Optional[List[str]] = None
     ) -> str:
         """构建给 LLM 的规划提示词
-        
+
         将用户请求和候选数据组合成一个完整的提示词，
         包含所有必要信息让 LLM 生成合理的旅行计划。
+        支持重试时附带错误反馈。
         """
         # 组合景点信息
         attraction_text = "\n".join([
@@ -623,9 +681,18 @@ class MultiAgentTripPlanner:
 
 ## 酒店候选 (请选择合适的住宿)
 {hotel_text}
-
-请严格按照JSON格式返回旅行计划。
 """
+        # 如果有错误反馈（重试时），附加到提示词
+        if error_messages:
+            error_text = "\n".join([f"- {msg}" for msg in error_messages])
+            prompt += f"""
+## 上次生成失败的错误反馈
+{error_text}
+
+请根据以上错误反馈，严格修正输出格式，确保返回合法的 JSON。
+"""
+        else:
+            prompt += "\n请严格按照JSON格式返回旅行计划。\n"
         return prompt
     
     @staticmethod
