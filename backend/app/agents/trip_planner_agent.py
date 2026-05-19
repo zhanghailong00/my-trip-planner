@@ -53,6 +53,7 @@ from typing import Annotated, Any, Dict, List, Optional, TypedDict
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from tenacity import retry, stop_after_attempt, wait_exponential
 from uuid import uuid4
 
 from ..models.schemas import (
@@ -316,17 +317,6 @@ class MultiAgentTripPlanner:
         # 传入 checkpointer 支持状态持久化
         return workflow.compile(checkpointer=self.checkpointer)
 
-    def _route_after_attraction(self, state: TripPlannerState) -> str:
-        """attraction 节点后的条件路由函数
-
-        根据景点搜索结果决定走正常流程还是备用搜索。
-        """
-        attractions = state.get("attraction_candidates", [])
-        if not attractions:
-            logger.warning("[ROUTER] 景点搜索结果为空，走备用搜索路径")
-            return "fallback"
-        return "ok"
-
     def _route_after_planner(self, state: TripPlannerState) -> str:
         """planner 节点后的条件路由函数
 
@@ -416,8 +406,8 @@ class MultiAgentTripPlanner:
 
         logger.info("[SEARCH] 搜索景点: 关键词=%s, 城市=%s", keywords, request.city)
 
-        # 调用高德地图搜索 POI
-        pois = self.amap_service.search_poi(
+        # 调用高德地图搜索 POI（带自动重试）
+        pois = self._safe_search_poi(
             keywords=keywords,
             city=request.city,
             citylimit=True
@@ -425,7 +415,7 @@ class MultiAgentTripPlanner:
 
         # 如果没有结果，尝试通用搜索
         if not pois:
-            pois = self.amap_service.search_poi(
+            pois = self._safe_search_poi(
                 keywords="景点",
                 city=request.city,
                 citylimit=True
@@ -468,8 +458,8 @@ class MultiAgentTripPlanner:
 
         logger.info("[WEATHER] 获取天气预报: 城市=%s", request.city)
 
-        # 调用高德地图获取天气
-        weather_list = self.amap_service.get_weather(request.city)
+        # 调用高德地图获取天气（带自动重试）
+        weather_list = self._safe_get_weather(request.city)
 
         # 转换为候选数据格式
         candidates: List[Dict[str, Any]] = []
@@ -521,8 +511,8 @@ class MultiAgentTripPlanner:
         else:
             logger.info("[HOTEL] 未找到景点，将在 %s 全城搜索酒店...", request.city)
 
-        # 调用高德地图搜索酒店 (传入中心点坐标)
-        pois = self.amap_service.search_poi(
+        # 调用高德地图搜索酒店 (传入中心点坐标，带自动重试)
+        pois = self._safe_search_poi(
             keywords=hotel_keyword,
             city=request.city,
             location=center_location,
@@ -532,7 +522,7 @@ class MultiAgentTripPlanner:
 
         # 如果周边没有结果，尝试全城通用搜索
         if not pois:
-            pois = self.amap_service.search_poi(
+            pois = self._safe_search_poi(
                 keywords="酒店",
                 city=request.city,
                 citylimit=True
@@ -620,7 +610,27 @@ class MultiAgentTripPlanner:
                 "planner_retry_count": retry_count + 1,
                 "planner_error_messages": [error_msg]
             }
-    
+
+    # ============================================
+    # Tenacity 重试包装 - 外部调用容错
+    # ============================================
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+    def _safe_search_poi(self, **kwargs) -> List:
+        """安全的 POI 搜索，带自动重试
+
+        使用 tenacity 实现指数退避重试，最多3次。
+        """
+        return self.amap_service.search_poi(**kwargs)
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+    def _safe_get_weather(self, city: str) -> List:
+        """安全的天气获取，带自动重试
+
+        使用 tenacity 实现指数退避重试，最多3次。
+        """
+        return self.amap_service.get_weather(city)
+
     # ============================================
     # 辅助方法
     # ============================================
