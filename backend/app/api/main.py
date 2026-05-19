@@ -3,17 +3,24 @@
 创建 FastAPI 应用实例，配置中间件和路由
 """
 
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import get_settings, print_config, validate_config
+from ..logging_config import setup_logging
 from .routes import trip
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用"""
+    # 初始化日志配置
+    setup_logging()
+
     settings = get_settings()
-    
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -21,7 +28,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc"
     )
-    
+
     # 配置 CORS 中间件，允许前端跨域访问
     app.add_middleware(
         CORSMiddleware,
@@ -30,10 +37,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"]
     )
-    
+
     # 注册路由
     app.include_router(trip.router, prefix="/api")
-    
+
     return app
 
 
@@ -43,22 +50,22 @@ app = create_app()
 @app.on_event("startup")
 async def startup_event():
     """应用启动时的初始化"""
-    print("\n" + "=" * 60)
-    print(f"STARTING: {get_settings().app_name} v{get_settings().app_version}")
-    print("=" * 60)
-    
+    logger.info("=" * 60)
+    logger.info("STARTING: %s v%s", get_settings().app_name, get_settings().app_version)
+    logger.info("=" * 60)
+
     print_config()
-    
+
     # 验证配置
     try:
         validate_config()
-        print("\n[SUCCESS] Configuration validated")
+        logger.info("[SUCCESS] Configuration validated")
     except ValueError as e:
-        print(f"\n[ERROR] Configuration validation failed:\n{e}")
+        logger.error("[ERROR] Configuration validation failed: %s", e)
         raise
-    
-    print("\n[INFO] API Docs: http://localhost:8001/docs")
-    print("=" * 60 + "\n")
+
+    logger.info("[INFO] API Docs: http://localhost:8001/docs")
+    logger.info("=" * 60)
 
 
 @app.on_event("shutdown")

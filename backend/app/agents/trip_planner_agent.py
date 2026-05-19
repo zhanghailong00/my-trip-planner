@@ -272,14 +272,13 @@ class MultiAgentTripPlanner:
 
         定义节点和边，构建完整的工作流程:
 
-        attraction ──┐
-                    ├──→ weather ──┐
-                    │              ├──→ planner ──[conditional]──→ END (valid)
-                    └──→ hotel  ──┘                   │
-                                                      └──→ planner (retry < 2)
-                                                      └──→ END (fallback)
+        attraction ──→ weather ──┐
+            │                    ├──→ review_candidates ──[interrupt]──→ planner ──→ END
+            └──→ hotel  ────────┘
 
-        当 attraction 返回空结果时，自动执行备用搜索（在节点内部处理）。
+        review_candidates 节点支持 Human-in-the-loop:
+        - interrupt_before: 在执行前暂停，返回候选数据给用户审核
+        - 用户确认后，通过 resume 继续执行 planner
         """
         # 创建状态图，指定状态类型
         workflow = StateGraph(TripPlannerState)
@@ -288,6 +287,7 @@ class MultiAgentTripPlanner:
         workflow.add_node("attraction", self._attraction_node)
         workflow.add_node("weather", self._weather_node)
         workflow.add_node("hotel", self._hotel_node)
+        workflow.add_node("review_candidates", self._review_candidates_node)
         workflow.add_node("planner", self._planner_node)
 
         # 设置入口点 (第一个执行的节点)
@@ -297,9 +297,12 @@ class MultiAgentTripPlanner:
         workflow.add_edge("attraction", "weather")
         workflow.add_edge("attraction", "hotel")
 
-        # weather 和 hotel 都完成后，才执行 planner
-        workflow.add_edge("weather", "planner")
-        workflow.add_edge("hotel", "planner")
+        # weather 和 hotel 都完成后，进入 review_candidates
+        workflow.add_edge("weather", "review_candidates")
+        workflow.add_edge("hotel", "review_candidates")
+
+        # review_candidates 完成后，执行 planner
+        workflow.add_edge("review_candidates", "planner")
 
         # --- Conditional Edge: planner 后的验证路由 ---
         # 验证 LLM 输出，无效时重试（最多2次）
@@ -314,8 +317,11 @@ class MultiAgentTripPlanner:
         )
 
         # 编译图，生成可执行的图对象
-        # 传入 checkpointer 支持状态持久化
-        return workflow.compile(checkpointer=self.checkpointer)
+        # interrupt_before: 在 review_candidates 节点前暂停，支持 human-in-the-loop
+        return workflow.compile(
+            checkpointer=self.checkpointer,
+            interrupt_before=["review_candidates"]
+        )
 
     def _route_after_planner(self, state: TripPlannerState) -> str:
         """planner 节点后的条件路由函数
@@ -338,10 +344,102 @@ class MultiAgentTripPlanner:
         logger.warning("[ROUTER] 已达最大重试次数，使用备用计划")
         return "fallback"
 
+    def start_plan_trip(self, request: TripRequest) -> Dict[str, Any]:
+        """开始旅行规划（到人工审核点暂停）
+
+        执行工作流直到 review_candidates 节点前中断，
+        返回候选数据和 thread_id 供用户审核。
+
+        Args:
+            request: TripRequest 对象，包含用户的旅行需求
+
+        Returns:
+            包含 thread_id 和候选数据的字典
+        """
+        start_time = time.time()
+        logger.info("[START] 开始旅行规划（Human-in-the-loop 模式）...")
+        logger.info("   目的地: %s", request.city)
+        logger.info("   日期: %s 至 %s", request.start_date, request.end_date)
+
+        # 使用 thread_id 作为 checkpoint 的键
+        thread_id = request.thread_id or str(uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        logger.info("[CHECKPOINT] Thread ID: %s", thread_id)
+
+        # 执行工作流，在 review_candidates 节点前中断
+        # interrupt_before 会自动在该节点前暂停
+        final_state = self.graph.invoke({"request": request}, config=config)
+
+        # 从状态中获取候选数据
+        attractions = final_state.get("attraction_candidates", [])
+        weather_list = final_state.get("weather_candidates", [])
+        hotels = final_state.get("hotel_candidates", [])
+
+        elapsed = time.time() - start_time
+        logger.info("[PAUSED] 工作流已暂停，等待用户审核候选数据")
+        logger.info("   景点候选: %d 个", len(attractions))
+        logger.info("   天气预报: %d 天", len(weather_list))
+        logger.info("   酒店候选: %d 个", len(hotels))
+
+        return {
+            "thread_id": thread_id,
+            "attraction_candidates": attractions,
+            "weather_candidates": weather_list,
+            "hotel_candidates": hotels,
+        }
+
+    def resume_plan_trip(self, thread_id: str) -> TripPlan:
+        """恢复旅行规划（从审核点继续）
+
+        从 review_candidates 节点后继续执行，
+        完成 planner 节点生成最终旅行计划。
+
+        Args:
+            thread_id: 会话ID，用于恢复 checkpoint 状态
+
+        Returns:
+            TripPlan 对象，包含生成的完整旅行计划
+        """
+        start_time = time.time()
+        logger.info("[RESUME] 恢复旅行规划，Thread ID: %s", thread_id)
+
+        config = {"configurable": {"thread_id": thread_id}}
+
+        try:
+            # 从 checkpoint 恢复执行
+            final_state = self.graph.invoke(None, config=config)
+
+            # 从最终状态中获取生成的旅行计划
+            trip_plan = final_state.get("trip_plan")
+
+            if not trip_plan:
+                # 如果生成失败，返回一个备用计划
+                # 需要从 checkpoint 中获取 request
+                current_state = self.graph.get_state(config)
+                request = current_state.get("request") if current_state else None
+                if request:
+                    return self._create_fallback_plan(request)
+                else:
+                    logger.error("[ERROR] 无法从 checkpoint 恢复 request")
+                    return None
+
+            elapsed = time.time() - start_time
+            logger.info("[SUCCESS] 旅行规划完成，总耗时: %.2f秒", elapsed)
+            return trip_plan
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error("[ERROR] LangGraph 恢复失败，耗时: %.2f秒, 错误: %s", elapsed, str(e))
+            import traceback
+            logger.debug(traceback.format_exc())
+            return None
+
     def plan_trip(self, request: TripRequest) -> TripPlan:
-        """执行旅行规划
+        """执行旅行规划（完整流程，无中断）
 
         这是主入口方法，调用 LangGraph 执行完整的工作流程。
+        注意：由于图中包含 interrupt_before，此方法会暂停在 review_candidates。
+        如需完整流程，请使用 start_plan_trip + resume_plan_trip。
 
         Args:
             request: TripRequest 对象，包含用户的旅行需求
@@ -362,6 +460,7 @@ class MultiAgentTripPlanner:
             logger.info("[CHECKPOINT] Thread ID: %s", thread_id)
 
             # 调用 graph.invoke() 执行工作流
+            # 注意：由于 interrupt_before=["review_candidates"]，会在此节点前暂停
             final_state = self.graph.invoke({"request": request}, config=config)
 
             # 从最终状态中获取生成的旅行计划
@@ -545,7 +644,29 @@ class MultiAgentTripPlanner:
         logger.info("[SUCCESS] 酒店搜索完成，候选数量: %d, 耗时: %.2f秒", len(candidates), elapsed)
 
         return {"hotel_candidates": candidates}
-    
+
+    def _review_candidates_node(self, state: TripPlannerState) -> Dict[str, Any]:
+        """候选审核节点 (Human-in-the-loop)
+
+        在 planner 执行前暂停，将候选数据返回给用户审核。
+        使用 interrupt_before 机制，在此节点前中断执行。
+
+        用户确认后，通过 resume 继续执行 planner。
+        """
+        request = state["request"]
+        attractions = state.get("attraction_candidates", [])
+        weather_list = state.get("weather_candidates", [])
+        hotels = state.get("hotel_candidates", [])
+
+        logger.info("[REVIEW] 候选审核节点 - 准备返回候选数据给用户")
+        logger.info("   景点候选: %d 个", len(attractions))
+        logger.info("   天气预报: %d 天", len(weather_list))
+        logger.info("   酒店候选: %d 个", len(hotels))
+
+        # 此节点返回空字典，因为状态已经在之前的节点中更新
+        # 它的作用是作为 interrupt_before 的断点
+        return {}
+
     def _planner_node(self, state: TripPlannerState) -> Dict[str, Any]:
         """规划节点 (核心节点)
 

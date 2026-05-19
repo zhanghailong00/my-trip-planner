@@ -50,5 +50,5 @@ if __name__ == "__main__":
         port=8001,
         reload=True,
         log_level="debug",
-        log_config=LOGGING_CONFIG,  # 传递日志配置给uvicorn
+        log_config=LOGGING_CONFIG,
     )
