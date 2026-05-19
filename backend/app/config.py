@@ -3,7 +3,10 @@
 使用 Pydantic Settings 管理应用配置，支持从 .env 文件加载
 """
 
+import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -117,17 +120,17 @@ def validate_config() -> bool:
 def print_config() -> None:
     """打印当前配置 (隐藏敏感信息)"""
     settings = get_settings()
-    print("\n--- Current Configuration ---")
-    print(f"  App Name: {settings.app_name}")
-    print(f"  App Version: {settings.app_version}")
-    print(f"  LLM Provider: {settings.llm_provider}")
-    print(f"  LLM Model: {settings.llm_model}")
-    print(f"  Map Provider: {settings.amap_provider}")
-    print(f"  AMAP API Key: {'[OK]' if settings.amap_api_key else '[MISSING]'}")
-    
+    logger.info("--- Current Configuration ---")
+    logger.info("  App Name: %s", settings.app_name)
+    logger.info("  App Version: %s", settings.app_version)
+    logger.info("  LLM Provider: %s", settings.llm_provider)
+    logger.info("  LLM Model: %s", settings.llm_model)
+    logger.info("  Map Provider: %s", settings.amap_provider)
+    logger.info("  AMAP API Key: %s", '[OK]' if settings.amap_api_key else '[MISSING]')
+
     if settings.llm_provider == "deepseek":
         api_key_status = '[OK]' if settings.deepseek_api_key else '[MISSING]'
-        print(f"  DeepSeek API Key: {api_key_status}")
+        logger.info("  DeepSeek API Key: %s", api_key_status)
     elif settings.llm_provider == "openai":
         api_key_status = '[OK]' if settings.openai_api_key else '[MISSING]'
-        print(f"  OpenAI API Key: {api_key_status}")
+        logger.info("  OpenAI API Key: %s", api_key_status)
