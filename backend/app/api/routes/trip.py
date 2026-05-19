@@ -6,11 +6,13 @@
 - POST /api/trip/resume/{thread_id}: 从审核点恢复
 """
 
+import json
 import logging
 import logging.config
 from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from ...logging_config import LOGGING_CONFIG
 from ...models.schemas import TripPlan, TripRequest
@@ -126,3 +128,39 @@ async def resume_trip_plan(thread_id: str) -> TripPlan:
             status_code=500,
             detail=f"恢复旅行规划失败: {str(e)}"
         )
+
+
+@router.post("/plan/stream", summary="流式生成旅行计划")
+async def stream_trip_plan(request: TripRequest):
+    """流式生成旅行计划（SSE 推送节点进度）
+
+    使用 Server-Sent Events 实时推送每个节点的执行进度，
+    前端可展示执行进度条。
+
+    事件类型:
+    - start: 开始执行，包含 thread_id
+    - node_complete: 节点完成，包含节点名称和耗时
+    - complete: 全部完成，包含完整旅行计划
+    - error: 执行出错
+
+    Args:
+        request: TripRequest 对象，包含用户的旅行需求
+
+    Returns:
+        EventSourceResponse: SSE 流式响应
+    """
+    async def event_generator():
+        try:
+            planner = get_trip_planner()
+            for event in planner.stream_plan_trip(request):
+                yield {
+                    "event": event["type"],
+                    "data": json.dumps(event, ensure_ascii=False, default=str)
+                }
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+            }
+
+    return EventSourceResponse(event_generator())

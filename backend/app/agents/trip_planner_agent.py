@@ -516,21 +516,38 @@ class MultiAgentTripPlanner:
 
         try:
             # 使用 graph.stream() 流式执行
+            interrupted = False
             for event in self.graph.stream({"request": request}, config=config):
                 for node_name, node_output in event.items():
                     elapsed = time.time() - start_time
-                    _log("[STREAM] 节点完成: %s, 耗时: %.2f秒" % (node_name, elapsed))
 
-                    # yield 节点完成事件
+                    # 检测中断事件 (interrupt_before 触发)
+                    if node_name == "__interrupt__":
+                        interrupted = True
+                        _log("[STREAM] 工作流中断，等待用户审核 (耗时: %.2f秒)" % elapsed)
+                        # 获取候选数据
+                        snapshot = self.graph.get_state(config)
+                        values = snapshot.values if snapshot and snapshot.values else {}
+                        yield {
+                            "type": "interrupt",
+                            "thread_id": thread_id,
+                            "attraction_candidates": values.get("attraction_candidates", []),
+                            "weather_candidates": values.get("weather_candidates", []),
+                            "hotel_candidates": values.get("hotel_candidates", []),
+                            "elapsed": round(elapsed, 2),
+                        }
+                        return
+
+                    _log("[STREAM] 节点完成: %s, 耗时: %.2f秒" % (node_name, elapsed))
                     yield {
                         "type": "node_complete",
                         "node": node_name,
                         "elapsed": round(elapsed, 2),
                     }
 
-            # 获取最终状态
-            final_state = self.graph.get_state(config)
-            trip_plan = final_state.get("trip_plan") if final_state else None
+            # 获取最终状态 (StateSnapshot 对象，需要访问 .values)
+            snapshot = self.graph.get_state(config)
+            trip_plan = snapshot.values.get("trip_plan") if snapshot and snapshot.values else None
 
             if trip_plan:
                 elapsed = time.time() - start_time
