@@ -19,6 +19,10 @@ os.chdir(current_dir)
 
 if __name__ == "__main__":
     import uvicorn
+    from app.logging_config import setup_logging
+
+    # 初始化日志配置
+    setup_logging()
 
     # 处理 Windows 控制台编码问题
     if sys.platform == "win32":

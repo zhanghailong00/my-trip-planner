@@ -7,10 +7,13 @@
 默认使用 Direct 模式，因为 amap-mcp-server 在 Windows 上存在兼容性问题
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from ..config import get_settings
 from ..models.schemas import Location, POIInfo, WeatherInfo
+
+logger = logging.getLogger(__name__)
 
 # 尝试导入 MCP 客户端 (如果需要使用 MCP 模式)
 try:
@@ -75,14 +78,14 @@ class AmapService:
         )
         self._mcp_client.start()
         self._tools_cache = self._mcp_client.list_tools()
-        print(f"[SUCCESS] 高德地图服务初始化成功 (MCP), 工具数量: {len(self._tools_cache)}")
+        logger.info("[SUCCESS] 高德地图服务初始化成功 (MCP), 工具数量: %d", len(self._tools_cache))
 
     def _use_direct(self) -> None:
         """使用直接 HTTP 方式调用高德地图服务"""
         from . import amap_direct_service as direct
 
         self._direct_service = direct.get_amap_direct_service()
-        print(f"[SUCCESS] 高德地图服务初始化成功 (直接HTTP调用)")
+        logger.info("[SUCCESS] 高德地图服务初始化成功 (直接HTTP调用)")
 
     # ============================================
     # 公开 API
@@ -144,7 +147,7 @@ class AmapService:
 
         text = self._extract_text_from_result(result)
         pois = self._parse_poi_from_text(text)
-        print(f"[POI] POI搜索完成: 关键词={keywords}, 城市={city}, 结果数={len(pois)}")
+        logger.info("[POI] POI搜索完成: 关键词=%s, 城市=%s, 结果数=%d", keywords, city, len(pois))
         return pois
 
     def get_weather(self, city: str) -> List[WeatherInfo]:
@@ -185,7 +188,7 @@ class AmapService:
                     wind_power=w.get("wind_power", "")
                 ))
 
-        print(f"[WEATHER] 天气查询完成: 城市={city}, 预报天数={len(weather_list)}")
+        logger.info("[WEATHER] 天气查询完成: 城市=%s, 预报天数=%d", city, len(weather_list))
         return weather_list
 
     def get_poi_detail(self, poi_id: str) -> Optional[POIInfo]:
@@ -259,7 +262,7 @@ class AmapService:
         try:
             return self._mcp_client.call_tool(tool_name, arguments)
         except Exception as e:
-            print(f"[WARNING] 调用高德地图工具 {tool_name} 失败: {e}")
+            logger.warning("[WARNING] 调用高德地图工具 %s 失败: %s", tool_name, str(e))
             raise
 
     @staticmethod

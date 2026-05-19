@@ -11,11 +11,14 @@ API 文档: https://lbs.amap.com/api/webservice/guide/api
 """
 
 import hashlib
+import logging
 import requests
 from typing import Any, Dict, List, Optional
 
 from ..config import get_settings
 from ..models.schemas import Location, POIInfo, WeatherInfo
+
+logger = logging.getLogger(__name__)
 
 
 class AmapDirectService:
@@ -45,8 +48,8 @@ class AmapDirectService:
         self.api_key = settings.amap_api_key
         self.security_code = settings.amap_security_code
         self.base_url = "https://restapi.amap.com/v3"
-        
-        print(f"[SUCCESS] 高德地图服务初始化成功 (直接HTTP调用)")
+
+        logger.info("[SUCCESS] 高德地图服务初始化成功 (直接HTTP调用)")
     
     def _sign_params(self, params: Dict[str, Any]) -> str:
         """对请求参数进行签名
@@ -139,19 +142,19 @@ class AmapDirectService:
         
         pois: List[POIInfo] = []
         poi_list = data.get('pois', [])
-        
+
         if not poi_list:
-            print(f"[POI] POI搜索完成: 关键词={keywords}, 城市={city}, 结果数=0")
+            logger.info("[POI] POI搜索完成: 关键词=%s, 城市=%s, 结果数=0", keywords, city)
             return pois
-        
+
         for poi_data in poi_list:
             try:
                 location_str = poi_data.get('location', '')
                 if not location_str or ',' not in location_str:
                     continue
-                
+
                 lng, lat = location_str.split(',')
-                
+
                 pois.append(POIInfo(
                     poi_id=poi_data.get('id', ''),
                     name=poi_data.get('name', ''),
@@ -164,10 +167,10 @@ class AmapDirectService:
                     phone=poi_data.get('tel', '') or '',  # 确保是字符串
                 ))
             except (ValueError, TypeError) as e:
-                print(f"[WARNING] 解析POI失败: {poi_data.get('name', 'unknown')}, 错误: {e}")
+                logger.warning("[WARNING] 解析POI失败: %s, 错误: %s", poi_data.get('name', 'unknown'), str(e))
                 continue
-        
-        print(f"[POI] POI搜索完成: 关键词={keywords}, 城市={city}, 结果数={len(pois)}")
+
+        logger.info("[POI] POI搜索完成: 关键词=%s, 城市=%s, 结果数=%d", keywords, city, len(pois))
         return pois
     
     def get_weather(self, city: str) -> List[WeatherInfo]:
@@ -217,8 +220,8 @@ class AmapDirectService:
                         wind_direction=day.get('daywind', ''),
                         wind_power=day.get('daypower', '')
                     ))
-        
-        print(f"[WEATHER] 天气查询完成: 城市={city}, 结果数={len(weather_list)}")
+
+        logger.info("[WEATHER] 天气查询完成: 城市=%s, 结果数=%d", city, len(weather_list))
         return weather_list
     
     def geocode(self, address: str, city: str = "") -> Optional[Location]:
@@ -252,9 +255,9 @@ class AmapDirectService:
             
             lng, lat = location_str.split(',')
             return Location(longitude=float(lng), latitude=float(lat))
-            
+
         except Exception as e:
-            print(f"[WARNING] 地理编码失败: {address}, 错误: {e}")
+            logger.warning("[WARNING] 地理编码失败: %s, 错误: %s", address, str(e))
             return None
     
     def regeocode(self, longitude: float, latitude: float) -> Optional[str]:
@@ -281,9 +284,9 @@ class AmapDirectService:
             data = self._get('geocode/regeocode', params)
             regeocode = data.get('regeocode', {})
             return regeocode.get('formatted_address', '')
-            
+
         except Exception as e:
-            print(f"[WARNING] 逆地理编码失败: ({longitude},{latitude}), 错误: {e}")
+            logger.warning("[WARNING] 逆地理编码失败: (%f,%f), 错误: %s", longitude, latitude, str(e))
             return None
 
 

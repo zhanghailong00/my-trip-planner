@@ -801,3 +801,326 @@ def test_full_flow_with_human_review():
    - SSE适合单向推送，实现简单
    - WebSocket适合双向通信，如聊天应用
    - 这个场景只需要服务端推送进度，SSE足够
+
+---
+
+## Step 8: 结构化日志（可观测可调试）
+
+### 技术选型
+
+使用Python标准库 `logging` + `logging.config` 进行结构化日志
+
+### 为什么这么干
+
+**问题**：当前代码全部使用 `print()` 输出调试信息，存在以下问题：
+1. 无法区分日志级别（INFO/WARNING/ERROR）
+2. 无法动态调整日志级别（生产环境关闭DEBUG）
+3. 无时间戳，无法追踪耗时
+4. 日志格式不统一，难以解析
+
+**logging的优势**：
+- Python标准库，无需额外依赖
+- 支持日志级别过滤
+- 支持时间戳、模块名、行号等上下文
+- 可以输出到文件、控制台、远程服务
+
+### 替代方案对比
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| print()（当前） | 最简单 | 无级别、无时间戳、无法过滤 |
+| logging标准库 | 标准、灵活 | 需要配置 |
+| loguru | API更简洁 | 需要额外依赖 |
+| structlog | 结构化最好 | 需要额外依赖 |
+
+**选择logging标准库**：
+- 无额外依赖，符合"依赖干净"原则
+- 标准库，面试时容易解释
+- 足够满足项目需求
+
+### 实现代码
+
+**日志配置**：
+```python
+# backend/app/logging_config.py
+import logging.config
+
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S"
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "level": "INFO",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+}
+
+def setup_logging():
+    logging.config.dictConfig(LOGGING_CONFIG)
+```
+
+**替换print()**：
+```python
+# 当前代码
+print(f"[SEARCH] 搜索景点: 关键词={keywords}, 城市={request.city}")
+print(f"[SUCCESS] 景点搜索完成，候选数量: {len(candidates)}")
+
+# 优化后
+import logging
+logger = logging.getLogger(__name__)
+
+logger.info("[SEARCH] 搜索景点: 关键词=%s, 城市=%s", keywords, request.city)
+logger.info("[SUCCESS] 景点搜索完成，候选数量: %d", len(candidates))
+```
+
+**耗时追踪**：
+```python
+import time
+
+def _attraction_node(self, state: TripPlannerState) -> Dict[str, Any]:
+    start_time = time.time()
+    # ... 搜索逻辑
+    elapsed = time.time() - start_time
+    logger.info("[SEARCH] 景点搜索完成，耗时: %.2f秒, 候选数量: %d", elapsed, len(candidates))
+```
+
+### 日志级别规范
+
+| 级别 | 用途 | 示例 |
+|------|------|------|
+| DEBUG | 详细调试信息 | 请求参数、响应详情 |
+| INFO | 关键业务节点 | 搜索开始/完成、API调用 |
+| WARNING | 异常但可恢复 | 搜索结果为空、重试中 |
+| ERROR | 严重错误 | API调用失败、解析失败 |
+
+### 价值点
+
+符合"可观测可调试"原则，方便排错和性能分析。
+
+---
+
+## Step 9: 精简依赖（依赖干净）
+
+### 技术选型
+
+手动维护精简的 `requirements.txt`，只包含真实依赖
+
+### 为什么这么干
+
+**问题**：当前 `requirements.txt` 是 `pip freeze` 全量导出，包含205个包，其中大量是项目从未使用的：
+- `streamlit` - 前端用的是Vue，不是Streamlit
+- `kubernetes` - 没有容器编排需求
+- `redis` - 没有使用Redis
+- `pandas`、`numpy` - 没有数据处理需求
+- `chromadb` - 没有向量数据库需求
+
+**依赖干净的好处**：
+1. **安全性**：减少潜在漏洞
+2. **部署速度**：安装依赖更快
+3. **可维护性**：清晰了解项目依赖
+4. **避免冲突**：减少版本冲突风险
+
+### 精简后的requirements.txt
+
+```txt
+# ============================================
+# 核心框架
+# ============================================
+fastapi==0.135.2
+uvicorn==0.42.0
+python-multipart==0.0.26
+
+# ============================================
+# 数据模型与配置
+# ============================================
+pydantic==2.12.5
+pydantic-settings==2.13.1
+python-dotenv==1.2.2
+
+# ============================================
+# LangChain/LangGraph
+# ============================================
+langchain-core==1.3.0
+langchain-openai==1.1.15
+langgraph==1.1.2
+langgraph-checkpoint==4.0.1
+
+# ============================================
+# HTTP请求
+# ============================================
+requests==2.32.5
+
+# ============================================
+# 重试机制
+# ============================================
+tenacity==9.1.4
+
+# ============================================
+# 流式输出
+# ============================================
+sse-starlette==3.3.4
+```
+
+### 如何维护
+
+1. **不要用 `pip freeze > requirements.txt`**
+2. **手动添加真实依赖**：只添加 `import` 的包
+3. **定期审查**：删除不再使用的依赖
+4. **锁定版本**：使用 `==` 锁定版本号
+
+### 价值点
+
+符合"依赖干净"原则，提高项目可维护性和安全性。
+
+---
+
+## Step 10: Prompt结构化（Prompt开发原则）
+
+### 技术选型
+
+使用 **角色 + 任务 + 约束 + 输出格式 + 禁止行为** 的结构化Prompt
+
+### 为什么这么干
+
+**问题**：当前的 `PLANNER_SYSTEM_PROMPT` 虽然内容详细，但结构不够清晰：
+1. 没有明确的分段标题
+2. 约束条件散落在各处
+3. 没有明确的禁止行为
+4. 缺少Few-Shot示例
+
+**结构化Prompt的好处**：
+1. **LLM理解更准确**：结构清晰，模型更容易遵循
+2. **可维护性高**：修改时一目了然
+3. **调试方便**：出问题时快速定位
+
+### 优化后的Prompt
+
+```python
+PLANNER_SYSTEM_PROMPT = """## 角色定义
+你是一位专业的旅行规划专家，擅长根据用户需求生成详细的多日旅行行程。
+
+## 核心任务
+根据用户提供的目的地、日期、偏好等信息，结合候选景点、天气、酒店数据，生成一份完整的旅行计划。
+
+## 必须遵守的约束
+1. 严格按照指定的JSON格式返回，不要返回任何额外的解释文本
+2. 天气温度必须是纯数字格式（如"28"），不能包含"°C"等符号
+3. 每天安排2-3个景点，必须包含早、中、晚三餐
+4. 每个景点必须包含真实的经纬度坐标（来自候选数据）
+5. 预算估算要合理，符合实际消费水平
+
+## 输出格式（严格遵循）
+```json
+{
+    "city": "城市名",
+    "start_date": "YYYY-MM-DD",
+    "end_date": "YYYY-MM-DD",
+    "days": 数字,
+    "weather_info": [...],
+    "days_plan": [
+        {
+            "date": "YYYY-MM-DD",
+            "attractions": [...],
+            "meals": [...],
+            "hotel": {...},
+            "summary": "当日摘要"
+        }
+    ],
+    "budget": {...},
+    "overall_suggestions": "整体建议"
+}
+```
+
+## 禁止行为
+- 禁止编造不存在的景点信息，必须使用候选数据中的景点
+- 禁止返回非JSON格式的内容
+- 禁止遗漏任何必须字段
+- 禁止在温度字段中包含"°"符号
+- 禁止安排同一天游览距离过远的景点
+
+## Few-Shot示例
+以下是一个合法的输出片段：
+```json
+{
+    "city": "北京",
+    "days_plan": [
+        {
+            "date": "2025-06-01",
+            "attractions": [
+                {
+                    "name": "故宫博物院",
+                    "address": "北京市东城区景山前街4号",
+                    "location": {"longitude": 116.397428, "latitude": 39.90923},
+                    "visit_duration": 180,
+                    "ticket_price": 60
+                }
+            ],
+            "meals": [
+                {"type": "breakfast", "name": "护国寺小吃", "estimated_cost": 30},
+                {"type": "lunch", "name": "全聚德烤鸭", "estimated_cost": 150},
+                {"type": "dinner", "name": "东来顺涮肉", "estimated_cost": 120}
+            ]
+        }
+    ]
+}
+```"""
+```
+
+### 结构对比
+
+| 方面 | 优化前 | 优化后 |
+|------|--------|--------|
+| 结构 | 长篇大论 | 分段标题清晰 |
+| 约束 | 散落各处 | 集中列出 |
+| 禁止行为 | 没有 | 明确列出 |
+| 示例 | 没有 | 包含Few-Shot |
+
+### 价值点
+
+符合"结构化Prompt"、"强约束前置"、"少冗余重示例"、"格式固定化"原则。
+
+---
+
+## 实施顺序（更新版）
+
+建议按以下顺序实施，每步一个git commit：
+
+1. **Step 8: 结构化日志** - 先建立日志系统，方便后续调试
+2. **Step 9: 精简依赖** - 清理requirements.txt
+3. **Step 10: Prompt结构化** - 优化System Prompt
+4. **Step 1: State Reducers** - LangGraph核心优化开始
+5. **Step 2: Checkpoint** - 为human-in-the-loop打基础
+6. **Step 3: Conditional Edges** - 动态路由
+7. **Step 4: Tenacity重试** - 错误重试
+8. **Step 5: LLM消息结构** - 消息格式优化
+9. **Step 6: Human-in-the-Loop** - 人工审核
+10. **Step 7: Streaming** - 流式输出
+
+---
+
+## 简历亮点（更新版）
+
+完成后可以在简历中描述：
+
+> **智能旅行规划助手** | LangGraph + FastAPI + Vue 3
+>
+> - 基于LangGraph构建多智能体旅行规划系统，实现景点搜索、天气获取、酒店匹配的并行处理
+> - 使用**条件边(Conditional Edges)**实现动态路由，根据搜索结果自动切换备用路径
+> - 集成**MemorySaver**实现状态持久化，支持执行中断恢复
+> - 实现**Human-in-the-loop**机制，用户可在规划生成前审核并调整候选景点
+> - 使用**Tenacity**实现外部调用的自动重试，提高系统可靠性
+> - 基于**SSE**实现流式输出，实时推送节点执行进度
+> - 实现**结构化日志系统**，支持耗时追踪和问题排查
+> - 优化**Prompt工程**，采用结构化格式提高LLM输出稳定性

@@ -5,11 +5,14 @@
 通过 LangChain 的 ChatOpenAI 接口统一调用，保持 API 一致性
 """
 
+import logging
 from typing import Optional
 
 from langchain_openai import ChatOpenAI
 
 from ..config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class LLMService:
@@ -61,8 +64,8 @@ class LLMService:
             temperature=settings.llm_temperature,
             streaming=False,  # 禁用流式输出，简化处理
         )
-        
-        print(f"[SUCCESS] LLM服务初始化成功: provider={self.provider}, model={self.model}")
+
+        logger.info("[SUCCESS] LLM服务初始化成功: provider=%s, model=%s", self.provider, self.model)
     
     def invoke(self, prompt: str) -> str:
         """调用 LLM 生成回复

@@ -44,6 +44,8 @@ LangGraph 是 LangChain 推出的一个用于构建有状态、多步骤 AI Agen
 """
 
 import json
+import logging
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 
@@ -143,6 +145,12 @@ PLANNER_SYSTEM_PROMPT = """你是专业的旅行规划专家。
 
 
 # ============================================
+# 日志配置
+# ============================================
+logger = logging.getLogger(__name__)
+
+
+# ============================================
 # LangGraph State 定义
 # ============================================
 
@@ -180,16 +188,16 @@ class MultiAgentTripPlanner:
     
     def __init__(self):
         """初始化旅行规划 Agent"""
-        print("[INIT] 初始化 LangGraph 旅行规划系统...")
-        
+        logger.info("[INIT] 初始化 LangGraph 旅行规划系统...")
+
         self.name = "langgraph-trip-planner"
         self.llm = get_llm()
         self.amap_service = get_amap_service()
-        
+
         # 构建 LangGraph 工作流
         self.graph = self._build_graph()
-        
-        print("[SUCCESS] LangGraph 旅行规划系统初始化完成")
+
+        logger.info("[SUCCESS] LangGraph 旅行规划系统初始化完成")
     
     def _build_graph(self):
         """构建 LangGraph 工作流图
@@ -231,40 +239,42 @@ class MultiAgentTripPlanner:
     
     def plan_trip(self, request: TripRequest) -> TripPlan:
         """执行旅行规划
-        
+
         这是主入口方法，调用 LangGraph 执行完整的工作流程。
-        
+
         Args:
             request: TripRequest 对象，包含用户的旅行需求
-            
+
         Returns:
             TripPlan 对象，包含生成的完整旅行计划
         """
-        print(f"\n{'='*60}")
-        print("[START] 开始 LangGraph 旅行规划...")
-        print(f"   目的地: {request.city}")
-        print(f"   日期: {request.start_date} 至 {request.end_date}")
-        print(f"   天数: {request.travel_days}天")
-        print(f"{'='*60}\n")
-        
+        start_time = time.time()
+        logger.info("[START] 开始 LangGraph 旅行规划...")
+        logger.info("   目的地: %s", request.city)
+        logger.info("   日期: %s 至 %s", request.start_date, request.end_date)
+        logger.info("   天数: %d天", request.travel_days)
+
         try:
             # 调用 graph.invoke() 执行工作流
             # 输入是初始状态，这里只传入 request
             final_state = self.graph.invoke({"request": request})
-            
+
             # 从最终状态中获取生成的旅行计划
             trip_plan = final_state.get("trip_plan")
-            
+
             if not trip_plan:
                 # 如果生成失败，返回一个备用计划
                 return self._create_fallback_plan(request)
-            
+
+            elapsed = time.time() - start_time
+            logger.info("[SUCCESS] 旅行规划完成，总耗时: %.2f秒", elapsed)
             return trip_plan
-            
+
         except Exception as e:
-            print(f"[ERROR] LangGraph 规划失败: {str(e)}")
+            elapsed = time.time() - start_time
+            logger.error("[ERROR] LangGraph 规划失败，耗时: %.2f秒, 错误: %s", elapsed, str(e))
             import traceback
-            traceback.print_exc()
+            logger.debug(traceback.format_exc())
             return self._create_fallback_plan(request)
     
     # ============================================
@@ -273,30 +283,31 @@ class MultiAgentTripPlanner:
     
     def _attraction_node(self, state: TripPlannerState) -> Dict[str, Any]:
         """景点节点
-        
+
         搜索用户指定城市的景点候选。
         这个节点会在图执行时第一个运行。
-        
+
         Args:
             state: 当前状态，包含 request (用户请求)
-            
+
         Returns:
             要更新到 state 的数据，必须是可以合并到 state 的字典
         """
+        start_time = time.time()
         request = state["request"]
-        
+
         # 根据用户偏好确定搜索关键词
         keywords = request.preferences[0] if request.preferences else "景点"
-        
-        print(f"[SEARCH] 搜索景点: 关键词={keywords}, 城市={request.city}")
-        
+
+        logger.info("[SEARCH] 搜索景点: 关键词=%s, 城市=%s", keywords, request.city)
+
         # 调用高德地图搜索 POI
         pois = self.amap_service.search_poi(
             keywords=keywords,
             city=request.city,
             citylimit=True
         )
-        
+
         # 如果没有结果，尝试通用搜索
         if not pois:
             pois = self.amap_service.search_poi(
@@ -304,7 +315,7 @@ class MultiAgentTripPlanner:
                 city=request.city,
                 citylimit=True
             )
-        
+
         # 转换为候选数据格式
         candidates: List[Dict[str, Any]] = []
         for poi in pois[:12]:  # 最多取12个
@@ -318,31 +329,33 @@ class MultiAgentTripPlanner:
                 "category": poi.type or "景点",
                 "poi_id": poi.poi_id,
             })
-        
-        print(f"[SUCCESS] 景点搜索完成，候选数量: {len(candidates)}")
-        
+
+        elapsed = time.time() - start_time
+        logger.info("[SUCCESS] 景点搜索完成，候选数量: %d, 耗时: %.2f秒", len(candidates), elapsed)
+
         # 返回更新的状态数据
         return {"attraction_candidates": candidates}
     
     def _weather_node(self, state: TripPlannerState) -> Dict[str, Any]:
         """天气节点
-        
+
         获取目的城市的天气预报。
         这个节点与 hotel 节点并行执行。
-        
+
         Args:
             state: 当前状态
-            
+
         Returns:
             天气候选数据
         """
+        start_time = time.time()
         request = state["request"]
-        
-        print(f"[WEATHER] 获取天气预报: 城市={request.city}")
-        
+
+        logger.info("[WEATHER] 获取天气预报: 城市=%s", request.city)
+
         # 调用高德地图获取天气
         weather_list = self.amap_service.get_weather(request.city)
-        
+
         # 转换为候选数据格式
         candidates: List[Dict[str, Any]] = []
         for w in weather_list:
@@ -355,29 +368,31 @@ class MultiAgentTripPlanner:
                 "wind_direction": w.wind_direction,
                 "wind_power": w.wind_power,
             })
-        
-        print(f"[SUCCESS] 天气预报获取完成，预报天数: {len(candidates)}")
-        
+
+        elapsed = time.time() - start_time
+        logger.info("[SUCCESS] 天气预报获取完成，预报天数: %d, 耗时: %.2f秒", len(candidates), elapsed)
+
         return {"weather_candidates": candidates}
     
     def _hotel_node(self, state: TripPlannerState) -> Dict[str, Any]:
         """酒店节点
-        
+
         搜索用户偏好类型的酒店候选。
         优化：优先根据景点节点找到的第一个景点位置搜索周边酒店。
-        
+
         Args:
             state: 当前状态，包含 request 和 attraction_candidates
-            
+
         Returns:
             酒店候选数据
         """
+        start_time = time.time()
         request = state["request"]
         attractions = state.get("attraction_candidates", [])
-        
+
         # 根据用户偏好确定搜索关键词
         hotel_keyword = request.accommodation if request.accommodation else "酒店"
-        
+
         # 尝试获取第一个景点的坐标作为中心点
         center_location = None
         if attractions:
@@ -387,10 +402,10 @@ class MultiAgentTripPlanner:
                 longitude=loc_data.get("longitude", 0),
                 latitude=loc_data.get("latitude", 0)
             )
-            print(f"[HOTEL] 正在搜索景点【{first_attraction['name']}】周边的酒店...")
+            logger.info("[HOTEL] 正在搜索景点【%s】周边的酒店...", first_attraction['name'])
         else:
-            print(f"[HOTEL] 未找到景点，将在 {request.city} 全城搜索酒店...")
-        
+            logger.info("[HOTEL] 未找到景点，将在 %s 全城搜索酒店...", request.city)
+
         # 调用高德地图搜索酒店 (传入中心点坐标)
         pois = self.amap_service.search_poi(
             keywords=hotel_keyword,
@@ -399,7 +414,7 @@ class MultiAgentTripPlanner:
             radius=5000,  # 5公里范围内
             citylimit=True
         )
-        
+
         # 如果周边没有结果，尝试全城通用搜索
         if not pois:
             pois = self.amap_service.search_poi(
@@ -407,7 +422,7 @@ class MultiAgentTripPlanner:
                 city=request.city,
                 citylimit=True
             )
-        
+
         # 转换为候选数据格式
         candidates: List[Dict[str, Any]] = []
         for poi in pois[:8]:  # 最多取8个
@@ -420,59 +435,62 @@ class MultiAgentTripPlanner:
                 },
                 "category": poi.type or "酒店",
             })
-        
-        print(f"[SUCCESS] 酒店搜索完成，候选数量: {len(candidates)}")
-        
+
+        elapsed = time.time() - start_time
+        logger.info("[SUCCESS] 酒店搜索完成，候选数量: %d, 耗时: %.2f秒", len(candidates), elapsed)
+
         return {"hotel_candidates": candidates}
     
     def _planner_node(self, state: TripPlannerState) -> Dict[str, Any]:
         """规划节点 (核心节点)
-        
+
         整合所有候选数据 (景点、天气、酒店)，
         使用 LLM 生成最终的旅行计划。
-        
+
         这是整个工作流的汇聚点，weather 和 hotel 完成后都会汇聚到这里。
-        
+
         Args:
             state: 当前状态，包含所有候选数据
-            
+
         Returns:
             生成的 TripPlan
         """
+        start_time = time.time()
         request = state["request"]
         attractions = state.get("attraction_candidates", [])
         weather_list = state.get("weather_candidates", [])
         hotels = state.get("hotel_candidates", [])
-        
-        print(f"\n[PLAN] 开始生成旅行计划...")
-        print(f"   景点候选: {len(attractions)} 个")
-        print(f"   天气预报: {len(weather_list)} 天")
-        print(f"   酒店候选: {len(hotels)} 个")
-        
+
+        logger.info("[PLAN] 开始生成旅行计划...")
+        logger.info("   景点候选: %d 个", len(attractions))
+        logger.info("   天气预报: %d 天", len(weather_list))
+        logger.info("   酒店候选: %d 个", len(hotels))
+
         # 构建给 LLM 的提示词
         prompt = self._build_planning_prompt(
             request, attractions, weather_list, hotels
         )
-        
+
         # 调用 LLM 生成计划
         response = self.llm.invoke(prompt)
-        
+
         # 解析 LLM 返回的 JSON
         try:
             # 尝试提取 JSON
             plan_data = self._extract_json_from_response(response)
-            
+
             if plan_data:
                 # 转换为 TripPlan 对象
                 trip_plan = self._build_trip_plan(plan_data, request)
-                print(f"[SUCCESS] 旅行计划生成成功!")
+                elapsed = time.time() - start_time
+                logger.info("[SUCCESS] 旅行计划生成成功! 耗时: %.2f秒", elapsed)
                 return {"trip_plan": trip_plan}
             else:
-                print(f"[WARNING] LLM 返回格式错误，使用备用计划")
+                logger.warning("[WARNING] LLM 返回格式错误，使用备用计划")
                 return {"trip_plan": self._create_fallback_plan(request)}
-                
+
         except Exception as e:
-            print(f"[ERROR] 解析旅行计划失败: {e}")
+            logger.error("[ERROR] 解析旅行计划失败: %s", str(e))
             return {"trip_plan": self._create_fallback_plan(request)}
     
     # ============================================
@@ -676,10 +694,10 @@ class MultiAgentTripPlanner:
     
     def _create_fallback_plan(self, request: TripRequest) -> TripPlan:
         """创建备用旅行计划
-        
+
         当 LLM 生成失败时，使用硬编码的示例计划作为后备
         """
-        print("[WARNING] 使用备用计划模板")
+        logger.warning("[WARNING] 使用备用计划模板")
         
         # 生成日期列表
         start = datetime.strptime(request.start_date, "%Y-%m-%d")
