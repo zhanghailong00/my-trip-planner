@@ -574,13 +574,13 @@ class MultiAgentTripPlanner:
         logger.info("   天气预报: %d 天", len(weather_list))
         logger.info("   酒店候选: %d 个", len(hotels))
 
-        # 构建给 LLM 的提示词
-        prompt = self._build_planning_prompt(
+        # 构建消息列表（SystemMessage + HumanMessage）
+        messages = self._build_planning_messages(
             request, attractions, weather_list, hotels, error_messages
         )
 
-        # 调用 LLM 生成计划
-        response = self.llm.invoke(prompt)
+        # 调用 LLM 生成计划（使用消息格式）
+        response = self.llm.invoke_with_messages(messages)
 
         # 解析 LLM 返回的 JSON
         try:
@@ -635,18 +635,17 @@ class MultiAgentTripPlanner:
     # 辅助方法
     # ============================================
     
-    def _build_planning_prompt(
+    def _build_planning_messages(
         self,
         request: TripRequest,
         attractions: List[Dict],
         weather_list: List[Dict],
         hotels: List[Dict],
         error_messages: Optional[List[str]] = None
-    ) -> str:
-        """构建给 LLM 的规划提示词
+    ) -> list:
+        """构建给 LLM 的消息列表
 
-        将用户请求和候选数据组合成一个完整的提示词，
-        包含所有必要信息让 LLM 生成合理的旅行计划。
+        使用 SystemMessage + HumanMessage 格式，利用 LangChain 消息系统。
         支持重试时附带错误反馈。
         """
         # 组合景点信息
@@ -655,27 +654,25 @@ class MultiAgentTripPlanner:
             f"坐标({a['location']['longitude']},{a['location']['latitude']})"
             for a in attractions
         ])
-        
+
         # 组合天气信息
         weather_text = "\n".join([
             f"- {w['date']}: {w['day_weather']}/{w['night_weather']}, "
             f"温度{w['day_temp']}°C/{w['night_temp']}°C, {w['wind_direction']}{w['wind_power']}"
             for w in weather_list
         ])
-        
+
         # 组合酒店信息
         hotel_text = "\n".join([
             f"- {h['name']}: 地址{h['address']}"
             for h in hotels
         ])
-        
+
         # 组合用户偏好
         preference_text = ", ".join(request.preferences) if request.preferences else "无"
-        
-        # 构建完整提示词
-        prompt = f"""{PLANNER_SYSTEM_PROMPT}
 
-## 用户需求
+        # 构建 HumanMessage 内容
+        human_content = f"""## 用户需求
 - 目的地: {request.city}
 - 旅行日期: {request.start_date} 至 {request.end_date} (共{request.travel_days}天)
 - 交通方式: {request.transportation}
@@ -692,18 +689,24 @@ class MultiAgentTripPlanner:
 ## 酒店候选 (请选择合适的住宿)
 {hotel_text}
 """
-        # 如果有错误反馈（重试时），附加到提示词
+
+        # 如果有错误反馈（重试时），附加到消息中
         if error_messages:
             error_text = "\n".join([f"- {msg}" for msg in error_messages])
-            prompt += f"""
+            human_content += f"""
 ## 上次生成失败的错误反馈
 {error_text}
 
 请根据以上错误反馈，严格修正输出格式，确保返回合法的 JSON。
 """
         else:
-            prompt += "\n请严格按照JSON格式返回旅行计划。\n"
-        return prompt
+            human_content += "\n请严格按照JSON格式返回旅行计划。\n"
+
+        # 返回 SystemMessage + HumanMessage 列表
+        return [
+            SystemMessage(content=PLANNER_SYSTEM_PROMPT),
+            HumanMessage(content=human_content)
+        ]
     
     @staticmethod
     def _extract_json_from_response(response: str) -> Optional[Dict[str, Any]]:
